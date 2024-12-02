@@ -1,0 +1,123 @@
+import gradio as gr
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import PromptTemplate
+from langchain.callbacks import get_openai_callback
+import time
+from PyPDF2 import PdfReader
+
+# Define the PromptTemplate
+prompt = PromptTemplate(
+    template="""
+Assume you are a recruiter evaluating a fresher candidate's resume for a job opening, focusing on projects, skills, and relevant courses/certifications instead of extensive experience or formal designations.
+
+# Steps
+
+1. **Review Documentation**
+   - **Job Description**: Understand the requirements and expectations.
+   - **Candidate's Resume**: Examine for projects, skills, and certifications.
+
+job description:
+{jd_text}
+
+candidate resume:
+{cv_text}
+
+2. **Assessment Criteria**
+   - **Project Evaluation**: Consider the relevance and impact of projects.
+   - **Skills Evaluation**: Compare listed skills against job description requirements.
+   - **Courses/Certifications**: Evaluate relevance and quality relative to job needs.
+
+3. **Evaluation Process**
+   - **Projects and Skills**: Consider projects and skills over past job titles, emphasizing skills and recently acquired knowledge.
+   - **Course Relevance**: Identify any educational pursuits or certifications that match job requirements.
+   - **Scoring System**:
+     - **Exceptional (8-10):** Projects/skills match all / exceed expectations.
+     - **Perfect (6-8):** Projects/skills align well with expectations.
+     - **Average (3-6):** Some projects/skills relevant, but gaps exist.
+     - **Poor (0-3):** Few or no applicable projects/skills.
+
+4. **Scoring Breakdown**:
+   - **Projects**
+   - **Skills**
+   - **Certifications
+   - **Education Alignment**
+
+5. **Overall Insights**
+   - Summarize candidate strengths in relation to the job, focusing on projects, skills, and education.
+   - Provide a total score out of 10 reflecting alignment with job requirements.
+
+# Output Format
+
+Output the evaluation using Markdown format:
+- **Summary:** Brief analysis of the candidate’s alignment with the job (max 100 words).
+- **Overall Score:** X out of 10.
+- **Relevance:** Match between candidate's qualifications and job description.
+- **Reasoning:**
+   - **Projects:** Relevance of projects to job specifics.
+   - **Skills:** Alignment of listed skills.
+   - **Courses/Certifications:** Impact and relevance.
+   - **Education:** Overall educational alignment and insights.                
+                    """,
+            input_variables=["cv_text", "jd_text"],
+            validate_template=False,
+      )
+
+# Initialize the ChatOpenAI model
+llm = ChatOpenAI(model_name="gpt-4o-mini-2024-07-18", temperature=0)
+
+# Function to read PDF content
+def read_pdf(file):
+    pdf_reader = PdfReader(file)
+    text = "\n".join(page.extract_text() for page in pdf_reader.pages if page.extract_text())
+    return text
+
+# Define the evaluation function
+def evaluate_resume(jd_text, cv_text):
+    with get_openai_callback() as cb:
+        start_time = time.time()
+        result = llm.invoke(prompt.format(cv_text=cv_text, jd_text=jd_text))
+        end_time = time.time()
+
+        evaluation = result.content
+        api_call_time = end_time - start_time
+
+        return evaluation, f"COST: {cb}", f"API call time: {api_call_time:.2f} seconds"
+
+# Create the Gradio interface
+with gr.Blocks() as interface:
+    gr.Markdown("""
+    # Resume Evaluation System
+    Provide a job description and a candidate's resume to get an evaluation.
+    You can either upload a PDF or enter the text manually.
+    """)
+
+    with gr.Row():
+        with gr.Column():
+            jd_textbox = gr.Textbox(label="Job Description (Text)", lines=10, placeholder="Paste the job description here...")
+            jd_file = gr.File(label="Job Description (PDF)", file_types=[".pdf"])
+        with gr.Column():
+            cv_textbox = gr.Textbox(label="Candidate Resume (Text)", lines=10, placeholder="Paste the candidate's resume here...")
+            cv_file = gr.File(label="Candidate Resume (PDF)", file_types=[".pdf"])
+
+    with gr.Row():
+        evaluate_button = gr.Button("Evaluate")
+
+    with gr.Row():
+        output_text = gr.Markdown(label="Evaluation Output")
+        cost_output = gr.Textbox(label="Cost Details", interactive=False)
+        time_output = gr.Textbox(label="API Call Time", interactive=False)
+
+    # Handle the evaluation process
+    def process_inputs(jd_textbox, jd_file, cv_textbox, cv_file):
+        jd_text = jd_textbox if jd_textbox else read_pdf(jd_file.name) if jd_file else ""
+        cv_text = cv_textbox if cv_textbox else read_pdf(cv_file.name) if cv_file else ""
+        return evaluate_resume(jd_text, cv_text)
+
+    evaluate_button.click(
+        process_inputs,
+        inputs=[jd_textbox, jd_file, cv_textbox, cv_file],
+        outputs=[output_text, cost_output, time_output]
+    )
+
+# Launch the interface
+interface.launch()
